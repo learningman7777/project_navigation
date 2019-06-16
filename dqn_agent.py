@@ -43,7 +43,7 @@ class Agent():
         self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
 
-        # Replay memory
+        #Prioritized Replay memory
         self.memory = PrioritizedReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed, device)
      
         # Initialize time step (for updating every UPDATE_EVERY steps)
@@ -99,7 +99,7 @@ class Agent():
 
         # Get expected Q values from local model
         Q_expected = self.qnetwork_local(states).gather(1, actions)
-        abs_error = (Q_targets - Q_expected).abs().detach().numpy() + self.priority_epsilon
+        abs_error = (Q_targets - Q_expected).abs().detach().to("cpu").numpy() + self.priority_epsilon
                 
         
         # Compute loss
