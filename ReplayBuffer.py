@@ -69,22 +69,36 @@ class PrioritizedReplayBuffer:
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done", "abs_error"])
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done", "priority"])
         self.seed = random.seed(seed)
     
     def add(self, state, action, reward, next_state, done):
-        """Add a new experience to memory."""
-        priorities = np.array([e.abs_error for e in memory if e is not None])
-        max_priority = priorities.max()
+        """Add a new experience to memory with max priority"""
+        priorities = np.array([e.priority for e in self.memory if e is not None])
+        if len(priorities) > 0:
+            max_priority = priorities.max()
+        else:
+            max_priority = 1.0
+            
         e = self.experience(state, action, reward, next_state, done, max_priority)
         
         self.memory.append(e)
     
     def sample(self):
-        """Randomly sample a batch of experiences from memory."""
-        experiences = random.sample(self.memory, k=self.batch_size)
+        """Prioritized sample a batch of experiences from memory."""
         
-        beta = self.hyper_beta + (1 - self.hyper_beta) * completion
+        priorities = np.array([e.priority for e in self.memory if e is not None])
+        probabilities_a = priorities ** self.hyper_alpha
+        sum_probabilties_a = probabilities_a.sum()
+        p_i = probabilities_a / sum_probabilties_a
+        
+        sampled_indices = np.random.choice(len(self.memory), self.batch_size, p=p_i)
+        experiences = [self.memory[idx] for idx in sampled_indices]
+        
+        N = len(self.memory)
+        w_sampled = weights = (N * p_i[sampled_indices]) ** (-1 * self.hyper_beta)
+        w_sampled = w_sampled / w_sampled.max()
+        
         
         # .float() is casting float
         # .to(device) is move object both of CPU, GPU, other some device
@@ -93,9 +107,14 @@ class PrioritizedReplayBuffer:
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(self.device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(self.device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(self.device)
+        w = torch.from_numpy(np.vstack(w_sampled)).float()
   
-        return (states, actions, rewards, next_states, dones)
+        return (states, actions, rewards, next_states, dones, w, sampled_indices)
 
     def __len__(self):
         """Return the current size of internal memory."""
         return len(self.memory)
+    
+    def update_priorities(self, indices, priorities):
+        for idx, priority in zip(indices, priorities):
+            self.memory[idx]._replace(priority = priority)

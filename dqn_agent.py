@@ -35,15 +35,17 @@ class Agent():
         self.state_size = state_size
         self.action_size = action_size
         self.seed = random.seed(seed)
+        self.priority_epsilon = 1e-6
+       
 
         # Q-Network
         self.qnetwork_local = QNetwork(state_size, action_size, seed).to(device)
         self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
-        self.abs_error = 0
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed, device)
+        self.memory = PrioritizedReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed, device)
+     
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
     
@@ -88,9 +90,8 @@ class Agent():
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
             gamma (float): discount factor
         """
-        states, actions, rewards, next_states, dones = experiences
+        states, actions, rewards, next_states, dones, w, indices  = experiences
 
-        ## TODO: compute and minimize the loss
         Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
         
         # Compute Q targets for current states
@@ -98,15 +99,20 @@ class Agent():
 
         # Get expected Q values from local model
         Q_expected = self.qnetwork_local(states).gather(1, actions)
+        abs_error = (Q_targets - Q_expected).abs().detach().numpy() + self.priority_epsilon
+                
         
         # Compute loss
         loss = F.mse_loss(Q_expected, Q_targets)
-        self.abs_error = abs(loss.float())
+        
         #print(self.abs_error)
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        
+        # update priorities
+        self.memory.update_priorities(indices, abs_error)
         # ------------------- update target network ------------------- #
         self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)                     
 
